@@ -317,6 +317,7 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
     # Pre-process the message content for special syntax like {at_all}.
     # This can be extended to support more syntax in the future.
     content = content.replace("{at_all}", str(MessageSegment.at("all")))
+    content = content.replace("\\n", "\n")
 
     # --- Command Delegation ---
     # Based on the command_type, the appropriate logic is executed.
