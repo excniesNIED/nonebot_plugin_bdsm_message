@@ -285,8 +285,8 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
     if command_text.lower() == 'message':
         await message_handler.finish(
             "[消息调教类型][时间戳][消息内容][群号]\n"
-            "时间戳为 `0` 表示立即执行, `-1` 表示取消任务.\n"
-            "示例: `[sendmessage][20250917111100][{at_all}\\n大家好][1234567890]`"
+            "时间戳为 `0` 表示立即执行, `-1` 表示取消任务. 日期格式: YYYYMMDDHHMMSS 或 YYYYMMDDHHMM.\n"
+            "示例: `[sendmessage][202509171111][{at_all}\\n大家好][1234567890]`"
         )
         return
 
@@ -335,7 +335,13 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
                 bdsm_logger.error(f"Failed to send message to group {target_group}: {e}")
         elif timestamp_str.isdigit():  # Scheduled send
             try:
-                send_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                if len(timestamp_str) == 14:
+                    send_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                elif len(timestamp_str) == 12:
+                    send_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M")
+                else:
+                    raise ValueError("Incorrect timestamp length")
+
                 job_id = f"job_{send_time.timestamp()}_{target_group}"
                 scheduler.add_job(
                     execute_scheduled_task,
@@ -359,7 +365,7 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
                 )
                 bdsm_logger.info(f"Scheduled message for group {target_group} at {send_time}.")
             except ValueError:
-                await message_handler.send("Invalid timestamp format. Please use YYYYMMDDHHMMSS.")
+                await message_handler.send("Invalid timestamp format. Please use YYYYMMDDHHMMSS or YYYYMMDDHHMM.")
             except Exception as e:
                 await message_handler.send(f"Failed to schedule message: {e}")
                 bdsm_logger.error(f"Failed to schedule message for group {target_group}: {e}")
@@ -382,7 +388,13 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
                 bdsm_logger.error(f"Failed to forward message to group {target_group}: {e}")
         elif timestamp_str.isdigit():
             try:
-                send_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                if len(timestamp_str) == 14:
+                    send_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                elif len(timestamp_str) == 12:
+                    send_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M")
+                else:
+                    raise ValueError("Incorrect timestamp length")
+
                 job_id = f"job_forward_{send_time.timestamp()}_{target_group}"
                 scheduler.add_job(
                     execute_scheduled_task,
@@ -406,7 +418,7 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
                 )
                 bdsm_logger.info(f"Scheduled forward for group {target_group} at {send_time}.")
             except ValueError:
-                await message_handler.send("Invalid timestamp format. Please use YYYYMMDDHHMMSS.")
+                await message_handler.send("Invalid timestamp format. Please use YYYYMMDDHHMMSS or YYYYMMDDHHMM.")
             except Exception as e:
                 await message_handler.send(f"Failed to schedule forward: {e}")
                 bdsm_logger.error(f"Failed to schedule forward for group {target_group}: {e}")
@@ -460,12 +472,18 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
         # Filter by timestamp.
         if timestamp_str:
             try:
-                filter_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
-                filtered_tasks = {
-                    job_id: info
-                    for job_id, info in filtered_tasks.items()
-                    if datetime.fromisoformat(info["timestamp"]) == filter_time
-                }
+                filter_time = None
+                if len(timestamp_str) == 14:
+                    filter_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+                elif len(timestamp_str) == 12:
+                    filter_time = datetime.strptime(timestamp_str, "%Y%m%d%H%M")
+
+                if filter_time:
+                    filtered_tasks = {
+                        job_id: info
+                        for job_id, info in filtered_tasks.items()
+                        if datetime.fromisoformat(info["timestamp"]) == filter_time
+                    }
             except ValueError:
                 pass # Ignore invalid time formats during filtering.
 
