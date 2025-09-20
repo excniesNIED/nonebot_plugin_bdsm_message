@@ -256,33 +256,33 @@ def remove_from_queue(job_id: str):
 def parse_content_to_message(content: str) -> Message:
     """
     Parses a string with custom syntax into a NoneBot Message object.
-    - Replaces {at_all} with an "at all" segment.
-    - Replaces \\n with newlines.
+    - Handles {at_all} for "at all" segment.
+    - Handles \\n for newlines.
     - Parses {:Image(url="...")} into image segments.
     """
-    content = content.replace("{at_all}", str(MessageSegment.at("all")))
     content = content.replace("\\n", "\n")
 
-    # Regex to find image tags like {:Image(url="...")}
-    image_regex = r"\{\:Image\(url=\"(.*?)\"\)\}"
+    # Regex to split the string by our custom tags, but keep the tags
+    tag_regex = r"(\{at_all\}|\{\:Image\(url=\".*?\"\)\})"
+    parts = re.split(tag_regex, content)
+
     message = Message()
-    last_end = 0
+    image_url_regex = r"\{\:Image\(url=\"(.*?)\"\)\}"
 
-    for match in re.finditer(image_regex, content):
-        start, end = match.span()
-        # Add the text part before the image
-        if start > last_end:
-            message += MessageSegment.text(content[last_end:start])
-
-        # Add the image segment
-        url = match.group(1)
-        message += MessageSegment.image(file=url)
-        last_end = end
-
-    # Add any remaining text after the last image
-    if last_end < len(content):
-        message += MessageSegment.text(content[last_end:])
-
+    for part in parts:
+        if not part:  # re.split can produce empty strings
+            continue
+        
+        if part == "{at_all}":
+            message += MessageSegment.at("all")
+        elif re.match(image_url_regex, part):
+            match = re.search(image_url_regex, part)
+            if match:
+                url = match.group(1)
+                message += MessageSegment.image(file=url)
+        else:
+            message += MessageSegment.text(part)
+            
     return message
 
 # --- Permission Check ---
