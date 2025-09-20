@@ -180,23 +180,38 @@ async def execute_scheduled_task(
     bot = list(bots.values())[0]  # Get the first available bot instance.
 
     try:
+        message_to_send = None
         if command_type == "sendmessage":
-            await bot.send_group_msg(group_id=target_group, message=Message(content))
-            bdsm_logger.info(
-                f"Executed scheduled job {job_id}: Sent message to group {target_group}."
-            )
+            message_to_send = parse_content_to_message(content)
         elif command_type == "forwardmessage":
-             await bot.send_group_msg(group_id=target_group, message=Message(content))
-             bdsm_logger.info(
-                f"Executed scheduled job {job_id}: Forwarded message to group {target_group}."
+            message_to_send = Message(content)
+
+        if message_to_send:
+            msg_info = await bot.send_group_msg(
+                group_id=target_group, message=message_to_send
             )
+            message_id = msg_info["message_id"]
+
+            bdsm_logger.info(
+                f"Executed scheduled job {job_id}: Sent message to group {target_group}. MessageID: {message_id}"
+            )
+
+            # Send confirmation to admin groups
+            confirmation_message = f"Scheduled message sent to group {target_group}.\nMessageID: {message_id}"
+            for admin_group in config.admin_groups:
+                try:
+                    await bot.send_group_msg(
+                        group_id=admin_group, message=confirmation_message
+                    )
+                except Exception as e:
+                    bdsm_logger.error(
+                        f"Failed to send confirmation to admin group {admin_group}: {e}"
+                    )
 
         # Once the task is done, remove it from the persistent queue.
         remove_from_queue(job_id)
     except Exception as e:
-        bdsm_logger.error(
-            f"Failed to execute scheduled job {job_id}: {e}"
-        )
+        bdsm_logger.error(f"Failed to execute scheduled job {job_id}: {e}")
 
 # --- Queue Management ---
 def save_to_queue(job_id: str, task_info: Dict):
@@ -236,6 +251,39 @@ def remove_from_queue(job_id: str):
         del queue[job_id]
         with open(QUEUE_FILE, "w", encoding="utf-8") as f:
             json.dump(queue, f, indent=4, ensure_ascii=False)
+
+
+def parse_content_to_message(content: str) -> Message:
+    """
+    Parses a string with custom syntax into a NoneBot Message object.
+    - Replaces {at_all} with an "at all" segment.
+    - Replaces \\n with newlines.
+    - Parses {:Image(url="...")} into image segments.
+    """
+    content = content.replace("{at_all}", str(MessageSegment.at("all")))
+    content = content.replace("\\n", "\n")
+
+    # Regex to find image tags like {:Image(url="...")}
+    image_regex = r"\{\:Image\(url=\"(.*?)\"\)\}"
+    message = Message()
+    last_end = 0
+
+    for match in re.finditer(image_regex, content):
+        start, end = match.span()
+        # Add the text part before the image
+        if start > last_end:
+            message += MessageSegment.text(content[last_end:start])
+
+        # Add the image segment
+        url = match.group(1)
+        message += MessageSegment.image(file=url)
+        last_end = end
+
+    # Add any remaining text after the last image
+    if last_end < len(content):
+        message += MessageSegment.text(content[last_end:])
+
+    return message
 
 # --- Permission Check ---
 def is_admin(user_id: int) -> bool:
@@ -284,9 +332,29 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
     # Provide a simple help message if the user just pings the bot with "message".
     if command_text.lower() == 'message':
         await message_handler.finish(
-            "[消息调教类型][时间戳][消息内容][群号]\n"
-            "时间戳为 `0` 表示立即执行, `-1` 表示取消任务. 日期格式: YYYYMMDDHHMMSS 或 YYYYMMDDHHMM.\n"
-            "示例: `[sendmessage][202509171111][{at_all}\\n大家好][1234567890]`"
+            "BDSM Message Manager - 可用命令:\n"
+            "基本格式: [命令类型][时间戳][消息内容][目标群号]\n\n"
+            "1. sendmessage: 发送消息\n"
+            "   - 时间戳: 0 (立即发送) 或 YYYYMMDDHHMM(SS) (定时发送)\n"
+            "   - 消息内容: 支持纯文本, {at_all}, \\n (换行), 和 `{:Image(url=\"...\")}` 图片格式.\n"
+            "   - 示例: `[sendmessage][202509201200][大家好][123456]`\n\n"
+            "2. forwardmessage: 转发消息 (需回复一条消息)\n"
+            "   - 时间戳: 0 (立即发送) 或 YYYYMMDDHHMM(SS) (定时发送)\n"
+            "   - 消息内容: 留空\n"
+            "   - 示例: `[forwardmessage][0][][123456]` (回复某条消息时使用)\n\n"
+            "3. recallmessage: 撤回消息\n"
+            "   - 时间戳: 0\n"
+            "   - 消息内容: 要撤回的消息ID (MessageID).\n"
+            "   - 目标群号: 消息所在的群号 (虽然格式上需要, 但实际未使用).\n"
+            "   - 也可以通过回复要撤回的消息来使用, 消息内容和群号任意.\n"
+            "   - 示例: `[recallmessage][0][12345][654321]`\n\n"
+            "4. cancelmessage: 取消定时任务\n"
+            "   - 时间戳: -1\n"
+            "   - 消息内容: 要取消的任务ID (JobID).\n"
+            "   - 示例: `[cancelmessage][-1][job_...][0]`\n\n"
+            "5. schedulemessage: 查看定时任务列表\n"
+            "   - 时间戳/消息内容/目标群号: 可选的筛选条件.\n"
+            "   - 示例: `[schedulemessage][][][123456]` (查看所有发往群123456的任务)\n"
         )
         return
 
@@ -314,18 +382,15 @@ async def handle_message(bot: Bot, event: GroupMessageEvent):
         f"[{command_type}][{timestamp_str}][...][{target_group_str}]"
     )
 
-    # Pre-process the message content for special syntax like {at_all}.
-    # This can be extended to support more syntax in the future.
-    content = content.replace("{at_all}", str(MessageSegment.at("all")))
-    content = content.replace("\\n", "\n")
-
     # --- Command Delegation ---
     # Based on the command_type, the appropriate logic is executed.
     
     if command_type == "sendmessage":
         if timestamp_str == "0":  # Immediate send
             try:
-                msg_info = await bot.send_group_msg(group_id=target_group, message=Message(content))
+                msg_info = await bot.send_group_msg(
+                    group_id=target_group, message=parse_content_to_message(content)
+                )
                 await message_handler.send(
                     f"Message sent to group {target_group}. MessageID: {msg_info['message_id']}"
                 )
